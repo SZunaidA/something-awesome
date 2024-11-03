@@ -4,15 +4,23 @@ import struct
 
 
 class ProxyBridge(Bridge):
-    # def packet_unhandled(self, buff, direction, name):
-    #     if direction == "downstream":
-    #         self.downstream.send_packet(name, buff.read())
-    #     elif direction == "upstream":
-    #         print(f"[{direction}] {name}")
-    #         self.upstream.send_packet(name, buff.read())
-
     orig_look = None
     orig_pos = None
+    tele_id = None
+
+    def packet_unhandled(self, buff, direction, name):
+        if direction == "downstream":
+            self.downstream.send_packet(name, buff.read())
+        elif direction == "upstream":
+            print(f"[{direction}] {name}")
+            self.upstream.send_packet(name, buff.read())
+
+    def packet_upstream_teleport_confirm(self, buff):
+        buf = buff.read()
+        print(f"teleport {buf.hex()}")
+        self.tele_id = int(buf.hex(), 16)
+        self.upstream.send_packet("teleport_confirm", buf)
+        
 
     def packet_upstream_chat_message(self, buff):
         buff.save()
@@ -30,7 +38,7 @@ class ProxyBridge(Bridge):
 
                 yaw, pitch, ground = self.orig_look
                 flags = 0
-                teleport = 0
+                teleport = self.tele_id+1
                 dismount = 0
 
                 player_postion_buf = struct.pack('>dddffBBB', x, y, z, yaw, pitch, flags, teleport, dismount)
