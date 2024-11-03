@@ -71,7 +71,8 @@ factory.listen("127.0.0.1", 25565)
 
 Now we want to modify the `Bridge` to capture the packets sent between the `Downstream` and `Upstream` and analyse it.
 
-![](assets/20241102_164705_image.png)In the documentation, the `Bridge` class has a function called `packet_unhandled` that forwards the packets to the server by default. Using this, we can implement the logging of all the upstream and downstream packets sent.
+![](assets/20241102_164705_image.png)
+In the documentation, the `Bridge` class has a function called `packet_unhandled` that forwards the packets to the server by default. Using this, we can implement the logging of all the upstream and downstream packets sent.
 
 ```python
 class ProxyBridge(Bridge):
@@ -90,6 +91,15 @@ Now we run the proxy and can see all the logged upstream and downstream packets 
 Okay we can log and analyse the packets just fine through the bridge. But can we perhaps, edit it before sending it to the server?
 
 # Teleport Hacks
+
+In essence, if we want to teleport to a specific location, we need to update the players current location. From analysing the packets earlier, we noticed that there's an upstream packet `player_position` that we can potentially modify before sending it to the server.
+
+![](assets/20241102_184922_image.png)
+
+![](assets/20241102_185503_image.png)
+
+![](assets/20241102_185700_image.png)
+
 
 # References
 
