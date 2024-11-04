@@ -1,10 +1,14 @@
 # Hacking Minecraft
 
+#### by Zunaid Arefin - z5478318
+
 Minecraft is one of the most popular games of all time because of its simplicity and flexibility. It is a sandbox game where players explore a blocky, procedurally generated 3D world. There's two gamemodes, **survival** where players collect resources, fend off monsters, and manage health and hunger and **creative** where they have unlimited resources to build freely.
 
 Our goal in this project is to give ourselves advantage in survival mode that we would be getting creative mode. But what even is the point? In Minecraft, you can also play with other people, where their world is hosted on a server. If the world is set to survival mode, and we join their server and manage to exploit the game, we will be getting advantage over other players.
 
 In this project, we will be looking at how we make ourselves fly, run faster, unconsumable items, greater reach etc.
+
+Project source: https://github.com/SZunaidA/something-awesome
 
 # Setting up
 
@@ -22,7 +26,7 @@ We write a quick script to launch the server with `./launch`. The server will fa
 
 Since we are running this world on a server, we can analyse the packets being sent from the client (my pc) to the server.
 
-# Capturing client-server packets
+# Chapter 0: Capturing client-server packets
 
 Minecraft has a [protocol](https://wiki.vg/Protocol#Clientbound) that describes how client and server sends game data to each other. We are going to use a tool called [Quarry](https://github.com/barneygale/quarry) to write a proxy that analyses all the packets sent between the Minecraft client and server.
 
@@ -92,7 +96,7 @@ Now we run the proxy and can see all the logged upstream and downstream packets 
 
 Okay we can log and analyse the packets just fine through the bridge. But can we perhaps, edit it before sending it to the server?
 
-# Teleport Hacks
+# Chapter 1: Teleport Hacks
 
 In essence, if we want to teleport to a specific location, we need to update the players current location. From analysing the packets earlier, we noticed that there's an upstream packet `player_position` that we can potentially modify before sending it to the server.
 
@@ -178,17 +182,109 @@ It states that its an "ID given by the Synchrnoze Player Position packet", which
 
 I initially hypothesised that the teleport IDs for ender pearls were different to the teleport IDs of my TP hack, but the whole world shares a single teleport ID amongst everything. It did not bypass "Player moved too quickly".
 
-Then I checked out the `used_item` packet. 
+Then I checked out the `used_item` packet.
 
 ![](assets/20241103_161114_image.png)
 
 But this packet doesn't contain any information on *what* the player is holding. So we can't fake holding an Ender Pearl and then doing our TP hack tricking the server into thinking we are using an Ender Pearl.
 
+# Chapter 2: Flying
+
+To fly in creative mode, we press space to float up. And when we stop pressing space, we would stop floating and come to a standstill in the air. To go down, we have to do the crouch action.
+
+In order to fly in survival mode, every time we press space, we add a constant value to our player position's y-coordinate.
+
+In our previous teleportation hack, we sent the modified player position data to the client first, which is then forwarded to the server by the client. This time, we essentially have to do the same thing but constantly every time the user presses the space key.
+
+### Issues with detecting keypress
+
+Our proxy is just merely just intercepting the packets and modifying it on the fly before sending it to the server. However, these packets don't specifically tell us when the client is actually pressing the space button.
+
+My initial idea was to detect the keypress in our proxy, but after some thought that doesn't make any sense because clients aren't the ones running the proxy! In this case I am the client and also running the proxy for testing purposes. But if I were to sniff packets sent by some other player, I wouldn't be able to detect their keypresses through the proxy.
+
+**Solution:** We implement chat commands that starts or stops flying. In this case, we implement `.fly` and `.stopfly` to start and stop flying.
+
+We define a class attribute `y_const`, and it is added to the y-coordinate of the player position to make them float. Then we create a `packet_upstream_chat_message` method and implement the following:
+
+```python
+if chat_message.startswith(".fly"):
+    self.y_const = 5
+
+if chat_message.startswith(".stopfly"):
+    self.y_const = 0
+```
+
+So when we want to fly, it will add `5` as constant otherwise `0` so we won't fly.
+
+### Modifying and sending the packets
+
+Now we want to modify the packets, send it back to the client through the downstream, and then the client will send it back to the server.
+
+#### Attempt 1
+
+Since we want to send player position downstream and upstream, let's use `player_position_and_look` packet to do our job because it is both an upstream and downstream packet.
+
+```python
+def packet_upstream_player_position_and_look(self, buff):
+    buf = buff.read()
+    x, y, z, yaw, pitch, ground = struct.unpack('>dddffB', buf)
+
+    y += self.y_const
+
+    d_buf = struct.pack('>dddffBBB', x, y, z, yaw, pitch, 0, 0, ground)
+    self.downstream.send_packet('player_position_and_look', d_buf)
+    buf = struct.pack('>dddffB', x, y, z, yaw, pitch, ground)
+    self.upstream.send_packet('player_position_and_look', buf)
+```
+
+The player is stuck!
+
+![](assets/20241104_122143_image.png)
+
+![](assets/20241104_122406_image.png)
+
+![](assets/20241104_122207_image.png)
+
+From the looks of it, the method is sending the same `player_position_and_look` packet to the server really fast to the point we get kicked out for rate limiting our own server.
+
+What I am hypothesising is that since this is the `packet_upstream_player_position_and_look` packet, which gets called everything that packet is sent, each time it sends the packet downstream aka. the client, it sends it back upstream, and repeat the whole process of sending the packet downstream to upstream again, creating this "recursive" loop.
+
+#### Attempt 2
+
+So this time, let's try to capture each of the packets separetely. We'll be creating
+
+* `packet_downstream_player_position_and_look`
+* `packet_upstream_player_position`
+
+These two methods will take both type of player position packets, add `y_const` to the player's y-coordinate and send it to the server. 
+
+![](assets/20241104_152609_image.png)
+
+In this image, it can be seen that the first client on the right used to .fly command to float up which can be seen through the client on the left because the second client on the left is receiving the information from the server. 
+
+![](assets/20241104_152625_image.png)
+
+However, this is circumvented by the server after a while. 
+
+Another problem is that this attempt still does not fix the issue of the first client not flying up on client side. We still need to send the new y-coordinate to the downstream client everytime our bridge sends the new y-coordiante to the upstream server. But we learnt that from the first attempt that its simply not possible because the bridge will send the same player position back and forth creating a "loop", resulting in the player being stuck.
+
+### Fly hack verdict
+
+Because of this, a fly hack by intercepting the packets is simply not possible just because of the restriction of having to send the position back to the client. 
+
 # Reflection
 
 ### Teleport Hacks
 
-If I were to attempt to investigate TP hacks further to bypass the "Player moved too quickly check", I would have a look at the PaperMC server source code to see the conditions that checks whether or not to let the Player teleport. After analysing the conditions, I would investigate how to break the conditions so that they pass without the using of the admin teleport command or Ender Pearls. However I may not be able to do this within server-client protocol, and might have to dig further into the client side code as well. 
+If I were to attempt to investigate TP hacks further to bypass the "Player moved too quickly check", I would have a look at the PaperMC server source code to see the conditions that checks whether or not to let the Player teleport. After analysing the conditions, I would investigate how to break the conditions so that they pass without the using of the admin teleport command or Ender Pearls. However I may not be able to do this within server-client protocol, and might have to dig further into the client side code as well.
+
+### Fly Hacks
+
+To achieve fly hacks, I would attempt to modify the actual client instead of intercepting and modifying the packets. Because with a client that already sends malicious packets to the server, we don't have to worry about sending matching modified packets to both the server and client. 
+
+### Overall
+
+Overall, I have developed my approach to solving problems and learnt a lot about how communication is done over the network. I personally think my approach to tackling problems is unique and allowed me to use the security mindset. My approach was that I form a hypothesis, deeply analyse and experiment and check if my hypothesis is correct or not, which is how I make a lot of progress and learn about the internals.  
 
 # References
 
