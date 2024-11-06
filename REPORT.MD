@@ -256,36 +256,82 @@ So this time, let's try to capture each of the packets separetely. We'll be crea
 * `packet_downstream_player_position_and_look`
 * `packet_upstream_player_position`
 
-These two methods will take both type of player position packets, add `y_const` to the player's y-coordinate and send it to the server. 
+These two methods will take both type of player position packets, add `y_const` to the player's y-coordinate and send it to the server.
 
 ![](assets/20241104_152609_image.png)
 
-In this image, it can be seen that the first client on the right used to .fly command to float up which can be seen through the client on the left because the second client on the left is receiving the information from the server. 
+In this image, it can be seen that the first client on the right used to .fly command to float up which can be seen through the client on the left because the second client on the left is receiving the information from the server.
 
 ![](assets/20241104_152625_image.png)
 
-However, this is circumvented by the server after a while. 
+However, this is circumvented by the server after a while.
 
 Another problem is that this attempt still does not fix the issue of the first client not flying up on client side. We still need to send the new y-coordinate to the downstream client everytime our bridge sends the new y-coordiante to the upstream server. But we learnt that from the first attempt that its simply not possible because the bridge will send the same player position back and forth creating a "loop", resulting in the player being stuck.
 
 ### Fly hack verdict
 
-Because of this, a fly hack by intercepting the packets is simply not possible just because of the restriction of having to send the position back to the client. 
+Because of this, a fly hack by intercepting the packets is simply not possible just because of the restriction of having to send the position back to the client.
 
-# Reflection
+# Chapter 3: Editing Signs from Anywhere
 
-### Teleport Hacks
+The idea is to be able to edit a sign from anywhere in the world by sending certain packets to the server. If this is possible to do programmatically, then it is potentially possible to convert png or jpeg images into minecraft signs.
+
+### Analysing sign behavior
+
+Firstly, let's create a proxy that catches packets related to signs and analyse it. In Quarry documentation, there is a downstream `open_sign_editor` and an `update_sign` packets. So let's create packet capturing methods for them in our proxy accordingly and analyse it after placing down and empty sign.
+
+![](assets/20241104_161333_image.png)
+
+![](assets/20241104_161307_image.png)
+
+![](assets/20241104_161319_image.png)
+
+![](assets/20241104_161518_image.png)
+
+![](assets/20241104_161510_image.png)
+
+As we can see, according to the Minecraft Protocol and also the packets we have extracted in hex, both the `open_sign_editor` and `update_sign` contains the position of the sign.
+
+![](assets/20241104_163108_image.png)
+
+So if we have a look at our `open_sign_editor` packet `000005bfffef0040`, `040` represents the y-coordinate, `000005b` and `bfffef` represents both x and z-coordinates. But note that the `b` is shared between both the x and z coordinates because both of them are 26 bits. We know that `b` is `1011` in binary, so the `10` belongs to x and `11` belongs to z.
+
+According to the F3 debug menu, this sign was placed on block with coordinates 22,63,-272. So if we convert the bits corresponding to x, z and y, it actually corresponds to the sign's coordinate.
+
+# Going Forward
+
+Due to time constraints, we are unable to fully complete this chapter of our Minecraft hacking journey. However, going forward, the following is how I would achieve something awesome with minecraft signs.
+
+### Placing our first sign
+
+We have already analysed how the `open_sign_editor` and `update_sign` packets look like. Now we just input a coordinate into our proxy, and convert that coordinate and pack it into a packet that matches the corresponding sign packets. We would have to achieve this by defining an 8 byte variable potentially called `sign_location`, and then defining 3 variables for `x`, `y`and`z`and use bitwise AND operation to write the coordinates into the`sign_location` variable. Using bitwise operation here is important because `x` and `z` are 26 bit variables which are not even bytes, and it would be troublesome to do so without bitwise in Python.
+
+We would then send a downstream `open_sign_editor` packet to the client first (this is imporant because `update_sign` won't be sent if `open_sign_editor` isn't send before this) and then send an upstream `update_sign` packet to the server.
+
+### Writing strings into signs
+
+We know that the last bits of the `open_sign_editor` represent strings, so we would have to analyse what strings correnspond to what byte value and potentially use characters like `#` to turn it into byte values and bitwise'd into the packet. 
+
+### Deciphering images into signs
+
+We would first decipher very simple, very low resolution black and white images, where black represents a sign filled with character and white representing empty characters. There are also more advanced algorithms that checks for average grayscale values of a certain area of pixels and calculates an average, and depending on the value, it would pick a certain character. Each sign is also has a resolution of 15x4, so we can potentially also implement very accurate visual if we can write an algorithm that properly deciphers edges in the images and converts it into very specific byte values representing the strings on the sign.
+
+### Improving teleport hacks
 
 If I were to attempt to investigate TP hacks further to bypass the "Player moved too quickly check", I would have a look at the PaperMC server source code to see the conditions that checks whether or not to let the Player teleport. After analysing the conditions, I would investigate how to break the conditions so that they pass without the using of the admin teleport command or Ender Pearls. However I may not be able to do this within server-client protocol, and might have to dig further into the client side code as well.
 
-### Fly Hacks
+### About fly hacks
 
-To achieve fly hacks, I would attempt to modify the actual client instead of intercepting and modifying the packets. Because with a client that already sends malicious packets to the server, we don't have to worry about sending matching modified packets to both the server and client. 
+To achieve fly hacks, I would attempt to modify the actual client instead of intercepting and modifying the packets. Because with a client that already sends malicious packets to the server, we don't have to worry about sending matching modified packets to both the server and client.
 
-### Overall
+# Reflection
 
-Overall, I have developed my approach to solving problems and learnt a lot about how communication is done over the network. I personally think my approach to tackling problems is unique and allowed me to use the security mindset. My approach was that I form a hypothesis, deeply analyse and experiment and check if my hypothesis is correct or not, which is how I make a lot of progress and learn about the internals.  
+Overall, I have developed my approach to solving problems and learnt a lot about how communication is done over the network. I personally think my approach to tackling problems is unique and allowed me to use the security mindset. My approach was that I form a hypothesis, deeply analyse and experiment and check if my hypothesis is correct or not, which is how I make a lot of progress and learn about the internals.
+
+Another really cool project idea is to make an anti-cheat where we can analyse exisiting cheat source code, check how packets behave using those existing cheats. Since we are analysing odd packet behaviors, using Minecraft protocol and Quarry would be better suited for this kind of project over trying to write cheats through sniffing packets. 
 
 # References
 
 * [LiveOverflow's Minecraft HACKED Series](https://www.youtube.com/playlist?list=PLhixgUqwRTjwvBI-hmbZ2rpkAl4lutnJG)
+* [Quarry Docuementation](https://quarry.readthedocs.io/en/latest/networking/packet_names.html)
+* [Minecraft Network Protocol](https://)
